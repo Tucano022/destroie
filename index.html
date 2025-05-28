@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Undertale Battle Game</title>
+    <style>
+        body {
+            margin: 0;
+            background: #222;
+            overflow: hidden;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            user-select: none;
+        }
+        #gameCanvas {
+            background: #111;
+            display: block;
+            margin: 30px auto;
+            border: 3px solid #fff;
+        }
+        #restartBtn, #nextPhaseBtn {
+            display: none;
+            position: absolute;
+            left: 50%;
+            top: 60px;
+            transform: translateX(-50%);
+            font-size: 1.3em;
+            padding: 10px 28px;
+            border-radius: 8px;
+            border: none;
+            background: #fff;
+            color: #222;
+            cursor: pointer;
+            outline: none;
+            font-weight: bold;
+            z-index: 10;
+        }
+        #nextPhaseBtn {
+            top: 120px;
+        }
+        #endMsg {
+            display: none;
+            position: absolute;
+            left: 50%;
+            top: 20px;
+            transform: translateX(-50%);
+            font-size: 2em;
+            color: #fff;
+            text-shadow: 2px 2px 5px #000;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="endMsg"></div>
+    <button id="restartBtn">Reiniciar</button>
+    <button id="nextPhaseBtn">Próxima Fase</button>
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+    <script>
+        // Configurações Gerais
+        const WIDTH = 600, HEIGHT = 400;
+        const PLAYER_SIZE = 32, PLAYER_COLOR = "#6cf";
+        const PLAYER_SPEED = 4;
+        const PLAYER_MAX_HP = 5;
+        const PLAYER_BAR_WIDTH = 200, PLAYER_BAR_HEIGHT = 16;
+        const ENEMY_MAX_HP = 10;
+        const ENEMY_BAR_WIDTH = 250, ENEMY_BAR_HEIGHT = 18;
+
+        // Projéteis (todas as fases)
+        const PROJECTILE_SIZE = 18, PROJECTILE_COLOR = "#f33";
+        const PROJECTILE_SPEED = 2.3;
+        const PROJECTILE_INTERVAL_PHASE1 = 600; // ms
+        const PROJECTILE_INTERVAL_PHASE2 = 500;
+        const PROJECTILE_INTERVAL_PHASE3 = 600;
+
+        // Barra de ataque
+        const ATTACK_BAR_WIDTH = 90, ATTACK_BAR_HEIGHT = 22;
+        const ATTACK_BAR_COLOR = "#ff0";
+        const ATTACK_BAR_DURATION = 1200; // ms visível
+        const ATTACK_BAR_SPAWN_MIN_PHASE1 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE1 = 9000; // ms fase 1
+        const ATTACK_BAR_SPAWN_MIN_PHASE2 = 2000, ATTACK_BAR_SPAWN_MAX_PHASE2 = 4000; // ms fase 2 (mais frequente)
+        const ATTACK_BAR_SPAWN_MIN_PHASE3 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE3 = 9000; // fase 3 igual fase 1
+
+        // FASE 2: paredes das laterais
+        let wallAttackPending, wallAttackTime, wallAttackActive, wallAttackStep, wallAttackQueue, allowNormalProjectiles;
+
+        // FASE 3: Aviso piscante e bola grande
+        const WARNING_RADIUS = 28;
+        const WARNING_BLINKS = 3;
+        const WARNING_BLINK_TIME = 200; // ms por flash
+        const FALLING_BALL_RADIUS = 54;
+        const FALLING_BALL_COLOR = "#f22";
+        const FALLING_BALL_SPEED = 8;
+        const WARNING_COLOR_ON = "#ff6868";
+        const WARNING_COLOR_OFF = "#c02222";
+        const BALL_DAMAGE = 3;
+        const WARNING_PAUSE_BEFORE_BALL = 250;
+        const BALL_SPAWN_INTERVAL = 2000;
+
+        let phase = 1;
+        const PHASE_MAX = 3;
+
+        // Variáveis globais de jogo
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const restartBtn = document.getElementById('restartBtn');
+        const nextPhaseBtn = document.getElementById('nextPhaseBtn');
+        const endMsg = document.getElementById('endMsg');
+
+        let player, enemy, projectiles, attackBar, canAttack, lastProjectileTime, attackBarTimer, nextAttackBarTime;
+        let warning, fallingBalls, lastWarningTime, warningActive;
+        let phaseTimer;
+        let keys = {};
+        let running = false;
+        let gameOver = false;
+
+        function randBetween(a, b) {
+            return Math.random() * (b - a) + a;
+        }
+
+        function getAttackBarSpawnMin() {
+            if (phase === 2) return ATTACK_BAR_SPAWN_MIN_PHASE2;
+            if (phase === 3) return ATTACK_BAR_SPAWN_MIN_PHASE3;
+            return ATTACK_BAR_SPAWN_MIN_PHASE1;
+        }
+        function getAttackBarSpawnMax() {
+            if (phase === 2) return ATTACK_BAR_SPAWN_MAX_PHASE2;
+            if (phase === 3) return ATTACK_BAR_SPAWN_MAX_PHASE3;
+            return ATTACK_BAR_SPAWN_MAX_PHASE1;
+        }
+
+        function resetGame(nextPhase = false) {
+            player = {
+                x: WIDTH / 2 - PLAYER_SIZE / 2,
+                y: HEIGHT - 70,
+                size: PLAYER_SIZE,
+                hp: PLAYER_MAX_HP,
+                maxHp: PLAYER_MAX_HP,
+                alive: true
+            };
+            if (!nextPhase) {
+                phase = 1;
+            }
+            enemy = {
+                hp: ENEMY_MAX_HP + ((phase-1)*4),
+                maxHp: ENEMY_MAX_HP + ((phase-1)*4)
+            };
+            projectiles = [];
+            attackBar = null;
+            canAttack = false;
+            lastProjectileTime = 0;
+            attackBarTimer = 0;
+            nextAttackBarTime = Date.now() + randBetween(getAttackBarSpawnMin(), getAttackBarSpawnMax());
+            phaseTimer = Date.now();
+            wallAttackPending = false;
+            wallAttackActive = false;
+            wallAttackTime = Date.now() + randBetween(4000, 8000);
+            wallAttackStep = 0;
+            wallAttackQueue = [];
+            allowNormalProjectiles = true;
+            warning = null;
+            fallingBalls = [];
+            lastWarningTime = Date.now();
+            warningActive = false;
+            running = true;
+            gameOver = false;
+            restartBtn.style.display = "none";
+            nextPhaseBtn.style.display = "none";
+            endMsg.style.display = "none";
+            animationLoop();
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = PLAYER_COLOR;
+            ctx.fillRect(player.x, player.y, player.size, player.size);
+        }
+
+        function drawEnemyBar() {
+            const x = WIDTH / 2 - ENEMY_BAR_WIDTH / 2;
+            const y = 30;
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(x, y, ENEMY_BAR_WIDTH, ENEMY_BAR_HEIGHT);
+            ctx.fillStyle = "#f80";
+            let fillW = (enemy.hp / enemy.maxHp) * ENEMY_BAR_WIDTH;
+            ctx.fillRect(x, y, fillW, ENEMY_BAR_HEIGHT);
+            ctx.font = "bold 18px Arial";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "center";
+            ctx.fillText("OPONENTE", WIDTH / 2, y - 7);
+        }
+
+        function drawPlayerBar() {
+            const x = WIDTH / 2 - PLAYER_BAR_WIDTH / 2;
+            const y = HEIGHT - 38;
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(x, y, PLAYER_BAR_WIDTH, PLAYER_BAR_HEIGHT);
+            ctx.fillStyle = "#0c6";
+            let fillW = (player.hp / player.maxHp) * PLAYER_BAR_WIDTH;
+            ctx.fillRect(x, y, fillW, PLAYER_BAR_HEIGHT);
+            ctx.font = "bold 16px Arial";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "center";
+            ctx.fillText("JOGADOR", WIDTH / 2, y - 5);
+            ctx.font = "bold 14px Arial";
+            ctx.fillText(`HP: ${player.hp}/${player.maxHp}`, WIDTH / 2, y + PLAYER_BAR_HEIGHT + 16);
+        }
+
+        function drawWarning() {
+            if (!warning) return;
+            ctx.save();
+            ctx.globalAlpha = warning.blinkOn ? 1 : 0.5;
+            ctx.beginPath();
+            ctx.arc(warning.x, warning.y, WARNING_RADIUS, 0, 2 * Math.PI);
+            ctx.fillStyle = warning.blinkOn ? WARNING_COLOR_ON : WARNING_COLOR_OFF;
+            ctx.shadowColor = "#ffaaaa";
+            ctx.shadowBlur = 18;
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawFallingBalls() {
+            for (let ball of fallingBalls) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(ball.x, ball.y, FALLING_BALL_RADIUS, 0, 2 * Math.PI);
+                ctx.fillStyle = FALLING_BALL_COLOR;
+                ctx.shadowColor = "#fff";
+                ctx.shadowBlur = 16;
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function drawProjectiles() {
+            for (let proj of projectiles) {
+                ctx.fillStyle = proj.color || PROJECTILE_COLOR;
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, PROJECTILE_SIZE / 2, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+
+        function drawAttackBar() {
+            if (!attackBar) return;
+            ctx.fillStyle = ATTACK_BAR_COLOR;
+            ctx.fillRect(attackBar.x, attackBar.y, ATTACK_BAR_WIDTH, ATTACK_BAR_HEIGHT);
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(attackBar.x, attackBar.y, ATTACK_BAR_WIDTH, ATTACK_BAR_HEIGHT);
+            ctx.font = "bold 16px Arial";
+            ctx.fillStyle = "#222";
+            ctx.textAlign = "center";
+            ctx.fillText("ATAQUE!", attackBar.x + ATTACK_BAR_WIDTH / 2, attackBar.y + 17);
+        }
+
+        function spawnProjectile() {
+            let x = randBetween(30, WIDTH - 30);
+            let y = 0;
+            let targetX = player.x + player.size / 2;
+            let targetY = player.y + player.size / 2;
+            let dx = targetX - x;
+            let dy = targetY - y;
+            let len = Math.hypot(dx, dy);
+            let vx = (dx / len) * PROJECTILE_SPEED;
+            let vy = (dy / len) * PROJECTILE_SPEED;
+            projectiles.push({
+                x: x,
+                y: y,
+                vx: vx,
+                vy: vy,
+                size: PROJECTILE_SIZE
+            });
+        }
+
+        function spawnWallProjectilesFromSideTowardsPlayer(direction, targetY) {
+            const wallHeight = HEIGHT * 0.40;
+            const wallY = Math.max(wallHeight/2, Math.min(targetY, HEIGHT - wallHeight/2));
+            const wallStartY = wallY - wallHeight/2;
+            const wallCount = Math.floor(wallHeight / (PROJECTILE_SIZE + 8));
+            const wallX = (direction === 'left') ? 0 : WIDTH - PROJECTILE_SIZE;
+            const vx = (direction === 'left') ? PROJECTILE_SPEED * 1.00 : -PROJECTILE_SPEED * 1.00;
+            for (let i = 0; i < wallCount; i++) {
+                let py = wallStartY + i * ((wallHeight - PROJECTILE_SIZE) / (wallCount - 1));
+                projectiles.push({
+                    x: wallX,
+                    y: py,
+                    vx: vx,
+                    vy: 0,
+                    size: PROJECTILE_SIZE,
+                    color: "#d00"
+                });
+            }
+        }
+
+        function moveProjectiles() {
+            for (let proj of projectiles) {
+                proj.x += proj.vx;
+                proj.y += proj.vy;
+            }
+            projectiles = projectiles.filter(p =>
+                p.x > -p.size && p.x < WIDTH + p.size &&
+                p.y > -p.size && p.y < HEIGHT + p.size
+            );
+        }
+
+        function checkCollisions() {
+            // Projéteis (todas as fases)
+            for (let proj of projectiles) {
+                if (rectCircleCollide(
+                    player.x, player.y, player.size, player.size,
+                    proj.x, proj.y, proj.size / 2
+                )) {
+                    player.hp -= 1;
+                    proj.y = HEIGHT + 100;
+                    if (player.hp <= 0) {
+                        player.hp = 0;
+                        player.alive = false;
+                        endBattle(false);
+                    }
+                }
+            }
+            // Ataque
+            if (attackBar && rectsCollide(
+                player.x, player.y, player.size, player.size,
+                attackBar.x, attackBar.y, ATTACK_BAR_WIDTH, ATTACK_BAR_HEIGHT
+            )) {
+                if (canAttack) {
+                    enemy.hp -= 2 + Math.floor(Math.random()*2);
+                    if (enemy.hp <= 0) {
+                        enemy.hp = 0;
+                        endBattle(true);
+                    }
+                    canAttack = false;
+                    attackBar = null;
+                }
+            }
+            // Bola gigante (fase 3)
+            checkFallingBallsCollision();
+        }
+
+        function rectsCollide(x1, y1, w1, h1, x2, y2, w2, h2) {
+            return (
+                x1 < x2 + w2 &&
+                x1 + w1 > x2 &&
+                y1 < y2 + h2 &&
+                y1 + h1 > y2
+            );
+        }
+
+        function rectCircleCollide(rx, ry, rw, rh, cx, cy, cr) {
+            let closestX = Math.max(rx, Math.min(cx, rx + rw));
+            let closestY = Math.max(ry, Math.min(cy, ry + rh));
+            let distanceX = cx - closestX;
+            let distanceY = cy - closestY;
+            return (distanceX * distanceX + distanceY * distanceY) < (cr * cr);
+        }
+
+        function spawnAttackBar() {
+            let margin = 60;
+            let x, y;
+            do {
+                x = randBetween(margin, WIDTH - ATTACK_BAR_WIDTH - margin);
+                y = randBetween(margin + 40, HEIGHT - ATTACK_BAR_HEIGHT - margin - 40);
+            } while (
+                Math.abs(x - player.x) < 70 &&
+                Math.abs(y - player.y) < 70
+            );
+            attackBar = { x: x, y: y };
+            canAttack = true;
+            attackBarTimer = Date.now() + ATTACK_BAR_DURATION;
+        }
+
+        function handleAttackBar() {
+            if (!attackBar && Date.now() > nextAttackBarTime) {
+                spawnAttackBar();
+                nextAttackBarTime = Date.now() + randBetween(getAttackBarSpawnMin(), getAttackBarSpawnMax());
+            }
+            if (attackBar && Date.now() > attackBarTimer) {
+                attackBar = null;
+                canAttack = false;
+            }
+        }
+
+        function endBattle(won) {
+            running = false;
+            gameOver = true;
+            if (won && phase < PHASE_MAX) {
+                endMsg.innerText = "Você venceu! Pronto para a próxima fase?";
+                endMsg.style.display = "block";
+                nextPhaseBtn.style.display = "block";
+            } else if (won && phase === PHASE_MAX) {
+                endMsg.innerText = "Você venceu todas as fases!";
+                endMsg.style.display = "block";
+                restartBtn.style.display = "block";
+            } else {
+                endMsg.innerText = "Você perdeu!";
+                endMsg.style.display = "block";
+                restartBtn.style.display = "block";
+            }
+        }
+
+        function movePlayer() {
+            if (!player.alive) return;
+            let dx = 0, dy = 0;
+            if (keys.ArrowLeft || keys.a) dx -= 1;
+            if (keys.ArrowRight || keys.d) dx += 1;
+            if (keys.ArrowUp || keys.w) dy -= 1;
+            if (keys.ArrowDown || keys.s) dy += 1;
+            let len = Math.hypot(dx, dy);
+            if (len > 0) {
+                dx /= len;
+                dy /= len;
+                player.x += dx * PLAYER_SPEED;
+                player.y += dy * PLAYER_SPEED;
+            }
+            player.x = Math.max(0, Math.min(WIDTH - PLAYER_SIZE, player.x));
+            player.y = Math.max(60, Math.min(HEIGHT - PLAYER_SIZE, player.y));
+        }
+
+        // Fase 2: ataque de parede especial
+        function handlePhase2WallAttack() {
+            if (!wallAttackActive && Date.now() > wallAttackTime) {
+                wallAttackActive = true;
+                allowNormalProjectiles = false;
+                wallAttackStep = 0;
+                wallAttackQueue = [
+                    { direction: "left" },
+                    { direction: "left" },
+                    { direction: "right" },
+                    { direction: "right" }
+                ];
+                launchNextWallFromQueue();
+            }
+        }
+
+        function launchNextWallFromQueue() {
+            if (wallAttackStep < wallAttackQueue.length) {
+                let wall = wallAttackQueue[wallAttackStep];
+                let playerCenterY = player.y + player.size / 2;
+                spawnWallProjectilesFromSideTowardsPlayer(wall.direction, playerCenterY);
+                wallAttackStep++;
+                setTimeout(launchNextWallFromQueue, 1000); // 1 segundo de pausa entre paredes
+            } else {
+                setTimeout(() => {
+                    wallAttackActive = false;
+                    allowNormalProjectiles = true;
+                    wallAttackTime = Date.now() + randBetween(4000, 8000);
+                }, 1000);
+            }
+        }
+
+        // Fase 3: Warning piscando e bola caindo (apenas nos 4 cantos)
+        function handlePhase3WarningAndBalls() {
+            if (!warningActive && Date.now() - lastWarningTime > BALL_SPAWN_INTERVAL) {
+                // Escolhe um canto aleatório para o aviso (um dos 4 cantos)
+                let positions = [
+                    {x: WARNING_RADIUS + 18, y: WARNING_RADIUS + 60},
+                    {x: WIDTH - WARNING_RADIUS - 18, y: WARNING_RADIUS + 60},
+                    {x: WARNING_RADIUS + 18, y: HEIGHT - WARNING_RADIUS - 18},
+                    {x: WIDTH - WARNING_RADIUS - 18, y: HEIGHT - WARNING_RADIUS - 18}
+                ];
+                let pos = positions[Math.floor(Math.random() * positions.length)];
+                warning = {
+                    x: pos.x,
+                    y: pos.y,
+                    blinkCount: 0,
+                    blinkOn: true,
+                    blinkTimer: Date.now(),
+                    blinking: true
+                };
+                warningActive = true;
+            }
+            if (warning && warning.blinking) {
+                if (Date.now() - warning.blinkTimer > WARNING_BLINK_TIME) {
+                    warning.blinkOn = !warning.blinkOn;
+                    warning.blinkTimer = Date.now();
+                    if (!warning.blinkOn) {
+                        warning.blinkCount++;
+                        if (warning.blinkCount >= WARNING_BLINKS) {
+                            warning.blinking = false;
+                            warning.blinkOn = false;
+                            setTimeout(() => {
+                                spawnFallingBallAt(warning.x, warning.y);
+                                warning = null;
+                                warningActive = false;
+                                lastWarningTime = Date.now();
+                            }, WARNING_PAUSE_BEFORE_BALL);
+                        }
+                    }
+                }
+            }
+        }
+
+        function spawnFallingBallAt(x, y) {
+            fallingBalls.push({
+                x: x,
+                y: -FALLING_BALL_RADIUS,
+                speed: FALLING_BALL_SPEED,
+                hitPlayer: false
+            });
+        }
+
+        function moveFallingBalls() {
+            for (let ball of fallingBalls) {
+                ball.y += ball.speed;
+            }
+            fallingBalls = fallingBalls.filter(ball => ball.y < HEIGHT + FALLING_BALL_RADIUS);
+        }
+
+        function checkFallingBallsCollision() {
+            for (let ball of fallingBalls) {
+                if (rectCircleCollide(
+                    player.x, player.y, player.size, player.size,
+                    ball.x, ball.y, FALLING_BALL_RADIUS
+                )) {
+                    if (!ball.hitPlayer) {
+                        player.hp -= BALL_DAMAGE;
+                        ball.hitPlayer = true;
+                        if (player.hp <= 0) {
+                            player.hp = 0;
+                            player.alive = false;
+                            endBattle(false);
+                        }
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+            drawEnemyBar();
+            drawPlayerBar();
+            drawPlayer();
+            drawProjectiles();
+            drawAttackBar();
+            drawWarning();
+            drawFallingBalls();
+        }
+
+        function animationLoop() {
+            if (!running) return;
+
+            // Projéteis normais só aparecem se permitido (inclusive fase 3)
+            let projectileInterval =
+                (phase === 2) ? PROJECTILE_INTERVAL_PHASE2 :
+                (phase === 3) ? PROJECTILE_INTERVAL_PHASE3 :
+                PROJECTILE_INTERVAL_PHASE1;
+
+            if (phase === 2) {
+                handlePhase2WallAttack();
+            }
+            if (allowNormalProjectiles) {
+                if (Date.now() - lastProjectileTime > projectileInterval) {
+                    spawnProjectile();
+                    if (phase === 2 && Math.random() < 0.3) spawnProjectile();
+                    lastProjectileTime = Date.now();
+                }
+            }
+
+            movePlayer();
+            moveProjectiles();
+            handleAttackBar();
+            if (phase === 2) {
+                // nada extra
+            }
+            if (phase === 3) {
+                handlePhase3WarningAndBalls();
+                moveFallingBalls();
+            }
+            checkCollisions();
+            draw();
+            if (running) requestAnimationFrame(animationLoop);
+        }
+
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        restartBtn.onclick = () => resetGame();
+        nextPhaseBtn.onclick = () => {
+            phase++;
+            resetGame(true);
+        };
+
+        resetGame();
+    </script>
+</body>
+</html>
