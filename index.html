@@ -57,9 +57,55 @@
     <button id="nextPhaseBtn">Próxima Fase</button>
     <canvas id="gameCanvas" width="600" height="400"></canvas>
     <script>
+        // Função para carregar imagens
+        function loadImage(path) {
+            const img = new Image();
+            img.src = path;
+            return img;
+        }
+
+        // Assets organizados por fase
+        const assets = {
+            backgrounds: [
+                loadImage('assets/background_1.png'),
+                loadImage('assets/background_2.png'),
+                loadImage('assets/background_3.png')
+            ],
+            player: loadImage('assets/player.png'),
+            enemies: [
+                loadImage('assets/enemy_1.png'),
+                loadImage('assets/enemy_2.png'),
+                loadImage('assets/enemy_3.png')
+            ],
+            enemy_bars: [
+                loadImage('assets/enemy_bar_1.png'),
+                loadImage('assets/enemy_bar_2.png'),
+                loadImage('assets/enemy_bar_3.png')
+            ],
+            player_bars: [
+                loadImage('assets/player_bar_1.png'),
+                loadImage('assets/player_bar_2.png'),
+                loadImage('assets/player_bar_3.png')
+            ],
+            projectiles: [
+                loadImage('assets/projectile_1.png'),
+                loadImage('assets/projectile_2.png'),
+                loadImage('assets/projectile_3.png')
+            ],
+            wall_projectile: loadImage('assets/wall_projectile_2.png'),
+            attack_bars: [
+                loadImage('assets/attack_bar_1.png'),
+                loadImage('assets/attack_bar_2.png'),
+                loadImage('assets/attack_bar_3.png')
+            ],
+            warning_circle: loadImage('assets/warning_circle_3.png'),
+            falling_ball: loadImage('assets/falling_ball_3.png'),
+            shadow: loadImage('assets/shadow.png')
+        };
+
         // Configurações Gerais
         const WIDTH = 600, HEIGHT = 400;
-        const PLAYER_SIZE = 32, PLAYER_COLOR = "#6cf";
+        const PLAYER_SIZE = 32;
         const PLAYER_SPEED = 4;
         const PLAYER_MAX_HP = 5;
         const PLAYER_BAR_WIDTH = 200, PLAYER_BAR_HEIGHT = 16;
@@ -67,7 +113,7 @@
         const ENEMY_BAR_WIDTH = 250, ENEMY_BAR_HEIGHT = 18;
 
         // Projéteis (todas as fases)
-        const PROJECTILE_SIZE = 18, PROJECTILE_COLOR = "#f33";
+        const PROJECTILE_SIZE = 18;
         const PROJECTILE_SPEED = 2.3;
         const PROJECTILE_INTERVAL_PHASE1 = 600; // ms
         const PROJECTILE_INTERVAL_PHASE2 = 500;
@@ -75,11 +121,10 @@
 
         // Barra de ataque
         const ATTACK_BAR_WIDTH = 90, ATTACK_BAR_HEIGHT = 22;
-        const ATTACK_BAR_COLOR = "#ff0";
         const ATTACK_BAR_DURATION = 1200; // ms visível
-        const ATTACK_BAR_SPAWN_MIN_PHASE1 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE1 = 9000; // ms fase 1
-        const ATTACK_BAR_SPAWN_MIN_PHASE2 = 2000, ATTACK_BAR_SPAWN_MAX_PHASE2 = 4000; // ms fase 2 (mais frequente)
-        const ATTACK_BAR_SPAWN_MIN_PHASE3 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE3 = 9000; // fase 3 igual fase 1
+        const ATTACK_BAR_SPAWN_MIN_PHASE1 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE1 = 9000;
+        const ATTACK_BAR_SPAWN_MIN_PHASE2 = 2000, ATTACK_BAR_SPAWN_MAX_PHASE2 = 4000;
+        const ATTACK_BAR_SPAWN_MIN_PHASE3 = 5000, ATTACK_BAR_SPAWN_MAX_PHASE3 = 9000;
 
         // FASE 2: paredes das laterais
         let wallAttackPending, wallAttackTime, wallAttackActive, wallAttackStep, wallAttackQueue, allowNormalProjectiles;
@@ -89,10 +134,7 @@
         const WARNING_BLINKS = 3;
         const WARNING_BLINK_TIME = 200; // ms por flash
         const FALLING_BALL_RADIUS = 54;
-        const FALLING_BALL_COLOR = "#f22";
         const FALLING_BALL_SPEED = 8;
-        const WARNING_COLOR_ON = "#ff6868";
-        const WARNING_COLOR_OFF = "#c02222";
         const BALL_DAMAGE = 3;
         const WARNING_PAUSE_BEFORE_BALL = 250;
         const BALL_SPAWN_INTERVAL = 2000;
@@ -170,33 +212,44 @@
             animationLoop();
         }
 
+        function drawBackground() {
+            let bg = assets.backgrounds[phase-1];
+            if (bg.complete && bg.naturalWidth > 0) {
+                ctx.drawImage(bg, 0, 0, WIDTH, HEIGHT);
+            } else {
+                ctx.fillStyle = "#222";
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+            }
+        }
+
         function drawPlayer() {
-            ctx.fillStyle = PLAYER_COLOR;
-            ctx.fillRect(player.x, player.y, player.size, player.size);
+            ctx.drawImage(assets.shadow, player.x, player.y + player.size-10, player.size, 14);
+            ctx.drawImage(assets.player, player.x, player.y, player.size, player.size);
         }
 
         function drawEnemyBar() {
             const x = WIDTH / 2 - ENEMY_BAR_WIDTH / 2;
             const y = 30;
-            ctx.strokeStyle = "#fff";
-            ctx.strokeRect(x, y, ENEMY_BAR_WIDTH, ENEMY_BAR_HEIGHT);
-            ctx.fillStyle = "#f80";
-            let fillW = (enemy.hp / enemy.maxHp) * ENEMY_BAR_WIDTH;
-            ctx.fillRect(x, y, fillW, ENEMY_BAR_HEIGHT);
+            ctx.drawImage(assets.enemy_bars[phase-1], x, y, ENEMY_BAR_WIDTH, ENEMY_BAR_HEIGHT);
+            // Desenhar o inimigo ao lado da barra
+            ctx.drawImage(assets.enemies[phase-1], x + ENEMY_BAR_WIDTH + 10, y - 10, 40, 40);
             ctx.font = "bold 18px Arial";
             ctx.fillStyle = "#fff";
             ctx.textAlign = "center";
             ctx.fillText("OPONENTE", WIDTH / 2, y - 7);
+
+            // Vida acima da barra (em texto)
+            ctx.font = "bold 15px Arial";
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "left";
+            ctx.fillText(`HP: ${enemy.hp}/${enemy.maxHp}`, x + 8, y + ENEMY_BAR_HEIGHT - 3);
         }
 
         function drawPlayerBar() {
             const x = WIDTH / 2 - PLAYER_BAR_WIDTH / 2;
             const y = HEIGHT - 38;
-            ctx.strokeStyle = "#fff";
-            ctx.strokeRect(x, y, PLAYER_BAR_WIDTH, PLAYER_BAR_HEIGHT);
-            ctx.fillStyle = "#0c6";
-            let fillW = (player.hp / player.maxHp) * PLAYER_BAR_WIDTH;
-            ctx.fillRect(x, y, fillW, PLAYER_BAR_HEIGHT);
+            ctx.drawImage(assets.player_bars[phase-1], x, y, PLAYER_BAR_WIDTH, PLAYER_BAR_HEIGHT);
+
             ctx.font = "bold 16px Arial";
             ctx.fillStyle = "#fff";
             ctx.textAlign = "center";
@@ -207,45 +260,69 @@
 
         function drawWarning() {
             if (!warning) return;
-            ctx.save();
-            ctx.globalAlpha = warning.blinkOn ? 1 : 0.5;
-            ctx.beginPath();
-            ctx.arc(warning.x, warning.y, WARNING_RADIUS, 0, 2 * Math.PI);
-            ctx.fillStyle = warning.blinkOn ? WARNING_COLOR_ON : WARNING_COLOR_OFF;
-            ctx.shadowColor = "#ffaaaa";
-            ctx.shadowBlur = 18;
-            ctx.fill();
-            ctx.restore();
+            // Warning piscante só na fase 3
+            if (phase === 3) {
+                let alpha = warning.blinkOn ? 1 : 0.5;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.drawImage(
+                    assets.warning_circle,
+                    warning.x - WARNING_RADIUS,
+                    warning.y - WARNING_RADIUS,
+                    WARNING_RADIUS * 2,
+                    WARNING_RADIUS * 2
+                );
+                ctx.restore();
+            }
         }
 
         function drawFallingBalls() {
-            for (let ball of fallingBalls) {
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(ball.x, ball.y, FALLING_BALL_RADIUS, 0, 2 * Math.PI);
-                ctx.fillStyle = FALLING_BALL_COLOR;
-                ctx.shadowColor = "#fff";
-                ctx.shadowBlur = 16;
-                ctx.fill();
-                ctx.restore();
+            if (phase === 3) {
+                for (let ball of fallingBalls) {
+                    ctx.save();
+                    ctx.drawImage(
+                        assets.falling_ball,
+                        ball.x - FALLING_BALL_RADIUS,
+                        ball.y - FALLING_BALL_RADIUS,
+                        FALLING_BALL_RADIUS * 2,
+                        FALLING_BALL_RADIUS * 2
+                    );
+                    ctx.restore();
+                }
             }
         }
 
         function drawProjectiles() {
             for (let proj of projectiles) {
-                ctx.fillStyle = proj.color || PROJECTILE_COLOR;
-                ctx.beginPath();
-                ctx.arc(proj.x, proj.y, PROJECTILE_SIZE / 2, 0, 2 * Math.PI);
-                ctx.fill();
+                if (phase === 2 && proj.color === "#d00") {
+                    ctx.drawImage(
+                        assets.wall_projectile,
+                        proj.x - PROJECTILE_SIZE / 2,
+                        proj.y - PROJECTILE_SIZE / 2,
+                        PROJECTILE_SIZE,
+                        PROJECTILE_SIZE
+                    );
+                } else {
+                    ctx.drawImage(
+                        assets.projectiles[phase-1],
+                        proj.x - PROJECTILE_SIZE / 2,
+                        proj.y - PROJECTILE_SIZE / 2,
+                        PROJECTILE_SIZE,
+                        PROJECTILE_SIZE
+                    );
+                }
             }
         }
 
         function drawAttackBar() {
             if (!attackBar) return;
-            ctx.fillStyle = ATTACK_BAR_COLOR;
-            ctx.fillRect(attackBar.x, attackBar.y, ATTACK_BAR_WIDTH, ATTACK_BAR_HEIGHT);
-            ctx.strokeStyle = "#fff";
-            ctx.strokeRect(attackBar.x, attackBar.y, ATTACK_BAR_WIDTH, ATTACK_BAR_HEIGHT);
+            ctx.drawImage(
+                assets.attack_bars[phase-1],
+                attackBar.x,
+                attackBar.y,
+                ATTACK_BAR_WIDTH,
+                ATTACK_BAR_HEIGHT
+            );
             ctx.font = "bold 16px Arial";
             ctx.fillStyle = "#222";
             ctx.textAlign = "center";
@@ -526,7 +603,7 @@
         }
 
         function draw() {
-            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+            drawBackground();
             drawEnemyBar();
             drawPlayerBar();
             drawPlayer();
